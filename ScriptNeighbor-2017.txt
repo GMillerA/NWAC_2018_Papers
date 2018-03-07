@@ -1,0 +1,456 @@
+############################
+# Neighborhood statistics for point pattern analysis
+# Scripts to automate computation and plotting, with simulation envelopes
+# of G-hat, F-hat, and L-hat
+# 
+# Plots Lcross, Gcross for CSR and non-free rand
+# plots split bivariate ppp objects, and associated L-hat
+############################
+
+##############################################
+# function nb.FGJL
+# input: ppp object and number of simulations (default nsim=199)
+# computes G-hat, F-hat, and L-hat curves from ppp object
+# computes simulation envelopes assuming poisson
+# plots point patten and all three neighborhood statistics and envelopes
+# calls Fest.km, Gest.km, Kest.iso, Lest.iso
+###############################################
+
+nb.PFGL <- function(data.ppp, nsim=199) {
+   par(mfrow=c(2,2))	# sets up to plot in 2 by 2 panels
+   plot(data.ppp)
+   plot(envelope(data.ppp,fun=Fest.km, nsim=nsim),main="F-hat" , lwd=3,legend=F)
+   plot(envelope(data.ppp,fun=Gest.km, nsim=nsim),main="G-hat" , lwd=3,legend=F)
+   plot(envelope(data.ppp,fun=Lest.iso, nsim=nsim),main="L-hat" , lwd=3,legend=F)
+   par(mfrow=c(1,1))	# sets up to plot in 1 panel
+   }
+
+###########################################
+# G-hat with km edge correction
+###########################################
+
+Gest.km <- function(X, r = NULL, breaks = NULL, ..., correction = "km") 
+{
+    verifyclass(X, "ppp")
+    W <- X$window
+    npts <- npoints(X)
+    lambda <- npts/area.owin(W)
+    rmaxdefault <- rmax.rule("G", W, lambda)
+    breaks <- handle.r.b.args(r, breaks, W, rmaxdefault = rmaxdefault)
+    rvals <- breaks$r
+    rmax <- breaks$max
+    zeroes <- rep(0, length(rvals))
+    correction.given <- !missing(correction) && !is.null(correction)
+    if (is.null(correction)) 
+        correction <- c("rs", "km", "han")
+    correction <- pickoption("correction", correction, c(none = "none", 
+        border = "rs", rs = "rs", KM = "km", km = "km", Kaplan = "km", 
+        han = "han", Hanisch = "han", best = "km"), multi = TRUE)
+    nnd <- nndist(X$x, X$y)
+    bdry <- bdist.points(X)
+    o <- pmin(nnd, bdry)
+    d <- (nnd <= bdry)
+    df <- data.frame(r = rvals, theo = 1 - exp(-lambda * pi * 
+        rvals^2))
+    Z <- fv(df, "r", substitute(G(r), NULL), "theo", . ~ r, c(0, 
+        rmax), c("r", "%s[pois](r)"), c("distance argument r", 
+        "theoretical Poisson %s"), fname = "G")
+    if ("none" %in% correction) {
+        if (npts <= 1) 
+            edf <- zeroes
+        else {
+            hh <- hist(nnd[nnd <= rmax], breaks = breaks$val, 
+                plot = FALSE)$counts
+            edf <- cumsum(hh)/length(nnd)
+        }
+        Z <- bind.fv(Z, data.frame(raw = edf), "hat(%s)[raw](r)", 
+            "uncorrected estimate of %s", "raw")
+    }
+    if ("han" %in% correction) {
+        if (npts <= 1) 
+            G <- zeroes
+        else {
+            x <- nnd[d]
+            a <- eroded.areas(W, rvals)
+            h <- hist(x[x <= rmax], breaks = breaks$val, plot = FALSE)$counts
+            G <- cumsum(h/a)
+            G <- G/max(G[is.finite(G)])
+        }
+        Z <- bind.fv(Z, data.frame(han = G), "hat(%s)[han](r)", 
+            "Hanisch estimate of %s", "han")
+        attr(Z, "alim") <- range(rvals[G <= 0.9])
+    }
+    if (any(correction %in% c("rs", "km"))) {
+        if (npts == 0) 
+            result <- data.frame(rs = zeroes, km = zeroes, hazard = zeroes)
+        else {
+            result <- km.rs(o, bdry, d, breaks)
+            result <- as.data.frame(result[c("rs", "km", "hazard")])
+        }
+        Z <- bind.fv(Z, result, c("hat(%s)[bord](r)", "hat(%s)[km](r)", 
+            "hazard(r)"), c("border corrected estimate of %s", 
+            "Kaplan-Meier estimate of %s", "Kaplan-Meier estimate of hazard function lambda(r)"), 
+            "km")
+        attr(Z, "alim") <- range(rvals[result$km <= 0.9])
+    }
+    nama <- names(Z)
+    fvnames(Z, ".") <- rev(nama[!(nama %in% c("r", "hazard"))])
+    unitname(Z) <- unitname(X)
+    return(Z)
+}
+
+##############################################
+#F-hat with km edge correction
+##############################################
+
+Fest.km <- function (X, ..., eps=NULL, r=NULL, breaks=NULL, correction="km") 
+{
+    verifyclass(X, "ppp")
+    W <- X$window
+    npts <- npoints(X)
+    lambda <- npts/area.owin(W)
+    dwin <- as.mask(W, eps)
+    dX <- ppp(X$x, X$y, window = dwin, check = FALSE)
+    rmaxdefault <- rmax.rule("F", dwin, lambda)
+    breaks <- handle.r.b.args(r, breaks, dwin, eps, rmaxdefault = rmaxdefault)
+    rvals <- breaks$r
+    rmax <- breaks$max
+    correction.given <- !missing(correction) && !is.null(correction)
+    if (is.null(correction)) 
+        correction <- c("rs", "km", "cs")
+    correction <- pickoption("correction", correction, c(none = "none", 
+        border = "rs", rs = "rs", KM = "km", km = "km", Kaplan = "km", 
+        cs = "cs", ChiuStoyan = "cs", Hanisch = "cs", best = "km"), 
+        multi = TRUE)
+    df <- data.frame(r = rvals, theo = 1 - exp(-lambda * pi * 
+        rvals^2))
+    Z <- fv(df, "r", substitute(F(r), NULL), "theo", . ~ r, c(0, 
+        rmax), c("r", "%s[pois](r)"), c("distance argument r", 
+        "theoretical Poisson %s"), fname = "F")
+    nr <- length(rvals)
+    zeroes <- rep(0, nr)
+    if (X$window$type == "rectangle") {
+        e <- exactdt(dX)
+        dist <- e$d
+        bdry <- e$b
+    }
+    else {
+        e <- exactdt(dX)
+        b <- bdist.pixels(dX$window, style = "matrix")
+        mm <- dwin$m
+        dist <- e$d[mm]
+        bdry <- b[mm]
+    }
+    d <- (dist <= bdry)
+    o <- pmin(dist, bdry)
+    if ("none" %in% correction) {
+        if (npts == 0) 
+            edf <- zeroes
+        else {
+            hh <- hist(dist[dist <= rmax], breaks = breaks$val, 
+                plot = FALSE)$counts
+            edf <- cumsum(hh)/length(dist)
+        }
+        Z <- bind.fv(Z, data.frame(raw = edf), "hat(%s)[raw](r)", 
+            "uncorrected estimate of %s", "raw")
+    }
+    if ("cs" %in% correction) {
+        if (npts == 0) 
+            cs <- zeroes
+        else {
+            x <- dist[d]
+            a <- eroded.areas(W, rvals)
+            h <- hist(x[x <= rmax], breaks = breaks$val, plot = FALSE)$counts
+            H <- cumsum(h/a)
+            cs <- H/max(H[is.finite(H)])
+        }
+        Z <- bind.fv(Z, data.frame(cs = cs), "hat(%s)[cs](r)", 
+            "Chiu-Stoyan estimate of %s", "cs")
+        attr(Z, "alim") <- range(rvals[cs <= 0.9])
+    }
+    if (any(correction %in% c("rs", "km"))) {
+        want.rs <- "rs" %in% correction
+        want.km <- "km" %in% correction
+        selection <- c(want.rs, want.km, want.km)
+        tags <- c("rs", "km", "hazard")[selection]
+        labels <- c("hat(%s)[bord](r)", "hat(%s)[km](r)", "hazard(r)")[selection]
+        descr <- c("border corrected estimate of %s", "Kaplan-Meier estimate of %s", 
+            "Kaplan-Meier estimate of hazard function lambda(r)")[selection]
+        if (npts == 0) {
+            result <- as.data.frame(matrix(0, nr, length(tags)))
+            names(result) <- tags
+        }
+        else {
+            result <- km.rs.opt(o, bdry, d, breaks, KM = want.km, 
+                RS = want.rs)
+            result <- as.data.frame(result[tags])
+        }
+        Z <- bind.fv(Z, result, labels, descr, if (want.km) 
+            "km"
+        else "rs")
+        bestF <- if (want.km) 
+            result$km
+        else result$rs
+        attr(Z, "alim") <- range(rvals[bestF <= 0.9])
+    }
+    nama <- names(Z)
+    fvnames(Z, ".") <- rev(nama[!(nama %in% c("r", "hazard"))])
+    unitname(Z) <- unitname(X)
+    return(Z)
+}
+
+#############################################
+# K-hat with iso edge correction
+#############################################
+
+Kest.iso <- function(X, ..., r = NULL, breaks = NULL, correction = "isotropic", nlarge = 3000, domain = NULL, var.approx = FALSE) 
+{
+    verifyclass(X, "ppp")
+    nlarge.given <- !missing(nlarge) && !is.null(nlarge)
+    rfixed <- !is.null(r) || !is.null(breaks)
+    npts <- npoints(X)
+    W <- X$window
+    area <- area.owin(W)
+    lambda <- npts/area
+    lambda2 <- (npts * (npts - 1))/(area^2)
+    if (!is.null(domain)) {
+        domain <- as.owin(domain)
+        if (!is.subset.owin(domain, X$window)) 
+            stop(paste(dQuote("domain"), "is not a subset of the window of X"))
+        indom <- factor(inside.owin(X$x, X$y, domain), levels = c(FALSE, 
+            TRUE))
+        Kd <- Kdot(X %mark% indom, i = "TRUE", r = r, breaks = breaks, 
+            correction = correction)
+        Kd <- rebadge.fv(Kd, substitute(K(r), NULL), "K")
+        return(Kd)
+    }
+    rmaxdefault <- rmax.rule("K", W, lambda)
+    breaks <- handle.r.b.args(r, breaks, W, rmaxdefault = rmaxdefault)
+    r <- breaks$r
+    rmax <- breaks$max
+    correction.given <- !missing(correction) && !is.null(correction)
+    if (is.null(correction)) 
+        correction <- c("border", "isotropic", "Ripley", "translate")
+    correction <- pickoption("correction", correction, c(none = "none", 
+        border = "border", bord.modif = "bord.modif", isotropic = "isotropic", 
+        Ripley = "isotropic", translate = "translate", best = "best"), 
+        multi = TRUE)
+    best.wanted <- ("best" %in% correction)
+    correction <- implemented.for.K(correction, W$type, correction.given)
+    alim <- c(0, min(rmax, rmaxdefault))
+    can.do.fast <- breaks$even
+    large.n <- (npts >= nlarge)
+    demand.best <- correction.given && best.wanted
+    large.n.trigger <- large.n && !correction.given
+    borderonly <- all(correction == "border" | correction == 
+        "bord.modif")
+    will.do.fast <- can.do.fast && (borderonly || large.n.trigger)
+    asked <- borderonly || (nlarge.given && large.n.trigger)
+    if (will.do.fast && !asked) 
+        message(paste("number of data points exceeds", nlarge, 
+            "- computing border estimate only"))
+    if (asked && !can.do.fast) 
+        warning("r values not evenly spaced - cannot use efficient code")
+    if (will.do.fast) {
+        if (!rfixed) 
+            r <- seq(from = 0, to = alim[2], length.out = length(r))
+        return(Kborder.engine(X, max(r), length(r), correction))
+    }
+    K <- data.frame(r = r, theo = pi * r^2)
+    desc <- c("distance argument r", "theoretical Poisson %s")
+    K <- fv(K, "r", substitute(K(r), NULL), "theo", , alim, c("r", 
+        "%s[pois](r)"), desc, fname = "K")
+    rmax <- max(r)
+    close <- closepairs(X, rmax)
+    DIJ <- close$d
+    XI <- ppp(close$xi, close$yi, window = W, check = FALSE)
+    if (any(correction == "none")) {
+        wh <- whist(DIJ, breaks$val)
+        Kun <- cumsum(wh)/(lambda2 * area)
+        K <- bind.fv(K, data.frame(un = Kun), "hat(%s)[un](r)", 
+            "uncorrected estimate of %s", "un")
+    }
+    if (any(correction == "border" | correction == "bord.modif")) {
+        b <- bdist.points(X)
+        I <- close$i
+        bI <- b[I]
+        RS <- Kount(DIJ, bI, b, breaks)
+        if (any(correction == "bord.modif")) {
+            denom.area <- eroded.areas(W, r)
+            Kbm <- RS$numerator/(lambda2 * denom.area)
+            K <- bind.fv(K, data.frame(bord.modif = Kbm), "hat(%s)[bordm](r)", 
+                "modified border-corrected estimate of %s", "bord.modif")
+        }
+        if (any(correction == "border")) {
+            Kb <- RS$numerator/(lambda * RS$denom.count)
+            K <- bind.fv(K, data.frame(border = Kb), "hat(%s)[bord](r)", 
+                "border-corrected estimate of %s", "border")
+        }
+    }
+    if (any(correction == "translate")) {
+        XJ <- ppp(close$xj, close$yj, window = W, check = FALSE)
+        edgewt <- edge.Trans(XI, XJ, paired = TRUE)
+        wh <- whist(DIJ, breaks$val, edgewt)
+        Ktrans <- cumsum(wh)/(lambda2 * area)
+        h <- diameter(W)/2
+        Ktrans[r >= h] <- NA
+        K <- bind.fv(K, data.frame(trans = Ktrans), "hat(%s)[trans](r)", 
+            "translation-corrected estimate of %s", "trans")
+    }
+    if (any(correction == "isotropic")) {
+        edgewt <- edge.Ripley(XI, matrix(DIJ, ncol = 1))
+        wh <- whist(DIJ, breaks$val, edgewt)
+        Kiso <- cumsum(wh)/(lambda2 * area)
+        h <- diameter(W)/2
+        Kiso[r >= h] <- NA
+        K <- bind.fv(K, data.frame(iso = Kiso), "hat(%s)[iso](r)", 
+            "Ripley isotropic correction estimate of %s", "iso")
+    }
+    if (var.approx) {
+        A <- area
+        P <- perimeter(W)
+        n <- npts
+        rip <- 2 * ((A/(n - 1))^2) * (pi * r^2/A + 0.96 * P * 
+            r^3/A^2 + 0.13 * (n/A) * P * r^5/A^2)
+        K <- bind.fv(K, data.frame(rip = rip), "vR(r)", "Ripley approximation to var(%s) under CSR","iso")
+        if (W$type == "rectangle") {
+            a1r <- (0.21 * P * r^3 + 1.3 * r^4)/A^2
+            a2r <- (0.24 * P * r^5 + 2.62 * r^6)/A^3
+            br <- (pi * r^2/A) * (1 - pi * r^2/A) + (1.0716 * 
+                P * r^3 + 2.2375 * r^4)/A^2
+            ls <- (A^2) * (2 * br - a1r + (n - 2) * a2r)/(n * 
+                (n - 1))
+            K <- bind.fv(K, data.frame(ls = ls), "vLS(r)", "Lotwick-Silverman approx to var(%s) under CSR", "iso")
+        }
+    }
+    attr(K, "fmla") <- . ~ r
+    nama <- rev(colnames(K))
+    fvnames(K, ".") <- nama[!(nama %in% c("r", "rip", "ls"))]
+    unitname(K) <- unitname(X)
+    return(K)
+}
+
+##########################################################
+#Lest with iso edge correction, L(t) = t-sqrt(K)
+##########################################################
+
+Lest.iso <- function (...) 
+{
+    K <- Kest.iso(...)
+	T <- K$r
+    nama <- colnames(K)
+    K <- K[, !(nama %in% c("rip", "ls"))]
+    L <- eval.fv(T-sqrt(K/pi))
+    L <- rebadge.fv(L, substitute(L(r), NULL), "L")
+    return(L)
+}
+
+
+##########################################
+#########################################
+# Bivariate Analyses
+#########################################
+#######################################
+
+
+##############################################
+# function nb.cross
+# input: bivariate ppp object, Ho and number of simulations (default nsim=199)
+# computes cross- G12, G21, L-hat curves from ppp object
+# computes simulation envelopes assuming 
+#     Ho="nonfree" --> non-free randomization (Ha = interaction)
+#     Ho="CSR" --> two independent CSR
+# plots bivariate data and the three cross-curves
+# calls nonfree.rand, Gcross, Lcross.508 (which calls Kcross)
+# default par(mar=c(5.1,4.1,4.1,2.1))
+###############################################
+
+nb.cross <- function(data.ppp, title="data", sim="nonfree",nsim=199) {
+   mar.default<-par("mar")  # save defaults
+   par(mfrow=c(2,2), mar=c(0,0,0,0))	# sets up to plot in 2 by 2 panels with no margins  
+   # plot bivariate data blue circles (type 1) and red triangles (type 2)
+   plot(data.ppp, main=title,cols=c("darkblue","darkred"),lwd=2, pch=c(1,2)) 
+   par(mar=c(4,3,3,1))	# larger margins  
+
+   i <- levels(marks(data.ppp))[1]  # extract 1st type label
+   j <- levels(marks(data.ppp))[2]  # extract 2nd type label
+
+   if(sim=="nonfree"){
+      plot(envelope(data.ppp,simulate=expression(nonfree.rand(data.ppp)),fun=Lcross.508,nsim=nsim),lwd=3,legend=F, main="L-cross  sim = non-free rand")
+      plot(envelope(data.ppp,simulate=expression(nonfree.rand(data.ppp)),fun=Gcross, i=i,j=j, correction="km",nsim=nsim),lwd=3,legend=F, main="G-cross(1,2)  sim = non-free rand")
+      plot(envelope(data.ppp,simulate=expression(nonfree.rand(data.ppp)),fun=Gcross, i=j,j=i, correction="km",nsim=nsim),lwd=3,legend=F, main="G-cross(2,1)  sim = non-free rand")
+	}
+   else{
+      plot(envelope(data.ppp,fun=Lcross.508, nsim=nsim),lwd=3,legend=F, main="L-cross  sim = CSR")
+      plot(envelope(data.ppp,fun=Gcross, i=i,j=j, correction="km", nsim=nsim),lwd=3,legend=F, main="G-cross(1,2)  sim = CSR")
+      plot(envelope(data.ppp,fun=Gcross, i=j,j=i, correction="km", nsim=nsim),lwd=3,legend=F, main="G-cross(2,1)  sim = CSR")
+      }
+   par(mfrow=c(1,1), mar=mar.default)	# returns plot in 1 panel and regular margins
+   }
+
+
+##############################################
+# function nb.split
+# input: bivariate ppp object, number of simulations (default nsim=199)
+# Plots each event type separately, with individual L-hat below
+# calls Lest.iso, plot.ppp, and envelope
+# default par(mar=c(5.1,4.1,4.1,2.1))
+###############################################
+
+nb.split <- function(data.ppp,nsim=199) {
+   mar.default<-par("mar")  # save defaults
+   par(mfrow=c(2,2), mar=c(0,0,0,0))	# sets up to plot in 2 by 2 panels with no margins  
+   # plot bivariate data blue circles (type 1) and red triangles (type 2)
+   plot(split.ppp(data.ppp)[[1]], main=levels(marks(data.ppp))[1],cols=c("darkblue","darkred")[1],lwd=2, pch=c(1,2)[1]) 
+   plot(split.ppp(data.ppp)[[2]], main=levels(marks(data.ppp))[2],cols=c("darkblue","darkred")[2],lwd=2, pch=c(1,2)[2])
+   par(mar=c(4,3,3,1))	# larger margins  
+   plot(envelope(split.ppp(data.ppp)[[1]],fun=Lest.iso, nsim=nsim),main=paste(levels(marks(data.ppp))[1],"  L-hat"),lwd=3,legend=F)
+   plot(envelope(split.ppp(data.ppp)[[2]],fun=Lest.iso, nsim=nsim),main=paste(levels(marks(data.ppp))[2],"  L-hat"),lwd=3,legend=F)
+   par(mfrow=c(1,1), mar=mar.default)	# returns plot in 1 panel and regular margins
+   }
+
+
+##########################################################
+# Lcross as presented in 508 lectures
+# L(t) = t-sqrt(K)
+# weighted average of K(1,2) and K(2,1)
+##########################################################
+
+Lcross.508 <- function (X,...) 
+{
+    if (!is.multitype(X, dfok = FALSE)) 
+        stop("Point pattern must be multitype")
+    i <- levels(marks(X))[1]
+    j <- levels(marks(X))[2]
+    K1 <- Kcross(X, i, j,correction="iso")
+    R1 <- K1$r
+    K2 <- Kcross(X, j, i,correction="iso")
+    R2 <- K2$r
+    R <- unique(c(R1,R2))
+    R <- R[order(R)]
+    K1 <- Kcross(X, i, j, r=R,correction="iso")
+    K2 <- Kcross(X, j, i, r=R,correction="iso")
+    n1 <- as.matrix(table(X$marks))[1]
+    n2 <- as.matrix(table(X$marks))[2]
+    L <- eval.fv(R-sqrt((n2*K1 + n1*K2)/(pi*(n1+n2))))
+    iname <- make.parseable(paste(i))
+    jname <- make.parseable(paste(j))
+    L <- rebadge.fv(L, substitute(L[i, j](r), list(i = iname, 
+        j = jname)), sprintf("L[list(%s,%s)]", iname, jname), 
+        new.yexp = substitute(L[list(i, j)](r), list(i = iname, 
+            j = jname)))
+    attr(L, "labl") <- attr(K1, "labl")
+    return(L)
+}
+
+##############################################
+# function nonfree.randppp
+# input: bivariate ppp object (data.ppp) 
+# randomly assigns marks (bivariate type) to existing locations 
+# in the same proportion as the original bivariate point pattern
+###############################################
+
+nonfree.rand <- function(data.ppp){
+    marks(data.ppp)<-sample(marks(data.ppp), size=length(marks(data.ppp)))
+    return(data.ppp)
+    }

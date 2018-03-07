@@ -1,0 +1,77 @@
+######################################################
+#### Image plot of matrix
+#### main = title for image
+#### X = matrix
+######################################################
+
+image.mat <- function(X, main="") {
+	image(x=seq(1,ncol(X)),y=seq(1,nrow(X)),t(apply(X,2,rev)),xlab="",ylab="", asp=1,xaxt="n",yaxt="n", bty="n", main=main, col=rev(heat.colors(12)))
+	}
+
+######################################################
+#### Creates rook's or queen's neighborhood for matrix
+####  ntype = "rook" or "queen"
+######################################################
+
+neighbor <- function(x,ntype="rook"){
+    row <- nrow(x)
+    col <- ncol(x)
+    nb <- cell2nb(nrow=row, ncol=col, type=ntype) #rook or queen neighborhood
+    nw <- nb2listw(nb,style="B") #neighborhood with binary weights
+    return(nw)
+    }
+
+#######################################################
+#### Creates rook's or queen's neighborhood for matrix
+#### input data in matrix form, rows and columns
+#### type = "I" or "C" , defaults to "I"
+#### Ha is  "pos" for positive correlation, "neg" for negative corr. or "two" for two-sided Ha
+#### test = "test" or "mc", analytical solution for randomization (test) or monte carlo (mc); default "test"
+#### ntype = "rook" or "queen", defaults to rook
+#### nsim =1000 default, number of simulations for mc solution
+######################################################
+
+lattice.508 <- function(X, type="I", Ha="pos", test = "test", ntype="rook", nsim=10000) {
+	X.vect <- as.vector(X) # convert matrix or dataframe to column-wise list
+	X.nw <- neighbor(X, ntype=ntype) # Rook's case
+	if(Ha=="pos"){
+		Ha <- "positive autocorrelation" 
+		alt <- "greater"
+		}
+	if(Ha=="neg"){
+		Ha <- "negative autocorrelation" 
+		alt <- "less"
+		}
+	if(Ha=="two"){
+		Ha <- "not non-free random (two-tailed)" 
+		alt <- "two.sided"
+		}
+	print(noquote(paste0("neighborhood = ",ntype, "  Ha: ",Ha)))  #
+	if(type=="I" && test=="test") {
+		print(moran.test(X.vect, X.nw, alternative=alt))
+		}
+	if(type=="C" && test=="test") {
+		print(geary.test(X.vect, X.nw, alternative=alt))
+		}
+	if(type=="I" && test=="mc") {
+		print(moran.mc(X.vect, X.nw, nsim=nsim, alternative=alt))
+		}
+	if(type=="C" && test=="mc") {
+		print(geary.mc(X.vect, X.nw, nsim=nsim, alternative=alt))
+		}
+	}
+
+######################################################
+#### Converts data frame with three columns x, y and z to matrix
+#### assumes x, y coordinates are for a complete, regular grid
+#### lowest x values on left, lowest y values on bottom
+#### i.e. tradition N-S, E-W orientation
+######################################################
+
+df.to.mat <- function(X){
+	X <- X[order(X[,1],-X[,2]),]
+	ncols <- length(unique(X[,1]))
+	nrows <- length(unique(X[,2]))
+	mat.out <- matrix(X[,3], nrow=nrows,ncol=ncols)
+	return(mat.out)
+	}
