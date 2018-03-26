@@ -47,7 +47,7 @@ df$SiteType <- as.factor(df$SiteType)
 
 Site data consists of 51 sites within the San Juan Islands. The dataframe includes site number, latitude, longitude, and site type. Site type is divided into large villages, medium villages, small villages, and resource procurement sites. For the purposes of the analyses presented below, medium and large sites are aggregated together under "large" sites. All data is collected from previously published sources. Site locations are presented overlaid on a Google Earth picture and plotted below within the study area. Colors and shapes refer to individual site types. 
 
-San Juan Sites: ![](San Juan Sites.png) 
+San Juan Sites: ![](Brown and Miller-atkins map.jpg)
 
 ```{r, echo=FALSE, warning=FALSE, error=FALSE}
 coordinates(df) <- ~Long+Lat
